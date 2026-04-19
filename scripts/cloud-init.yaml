@@ -1,0 +1,112 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# cloud-init bootstrap template
+#
+# This file is rendered by Terraform's templatefile() function before being
+# base64-encoded and passed as custom_data to the Azure VM.
+#
+# Template variables (replaced by Terraform):
+#   ${app_repo}  — Git URL of the Python application
+#   ${app_port}  — TCP port the app listens on
+#   ${app_env}   — Deployment environment (dev / staging / prod)
+# ---------------------------------------------------------------------------
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - python3.11
+  - python3.11-venv
+  - python3-pip
+  - git
+  - nginx
+  - curl
+
+# Write the systemd unit file and nginx config before runcmd executes.
+write_files:
+  - path: /etc/systemd/system/app.service
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Python Application
+      Documentation=https://github.com/
+      After=network.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=appuser
+      Group=appuser
+      WorkingDirectory=/opt/app
+      EnvironmentFile=/opt/app/.env
+      ExecStart=/opt/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${app_port} --workers 2
+      ExecReload=/bin/kill -HUP $MAINPID
+      Restart=always
+      RestartSec=5
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=app
+
+      # Hardening
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ReadWritePaths=/opt/app
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/nginx/sites-available/app
+    permissions: "0644"
+    owner: root:root
+    content: |
+      server {
+          listen 80;
+          server_name _;
+
+          location / {
+              proxy_pass         http://127.0.0.1:${app_port};
+              proxy_http_version 1.1;
+              proxy_set_header   Host              $host;
+              proxy_set_header   X-Real-IP         $remote_addr;
+              proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+              proxy_set_header   X-Forwarded-Proto $scheme;
+              proxy_read_timeout 60s;
+          }
+      }
+
+runcmd:
+  # Create a system user with no login shell for running the app.
+  - useradd --system --shell /usr/sbin/nologin --home-dir /opt/app appuser
+
+  # Clone the application repository.
+  - git clone ${app_repo} /opt/app
+
+  # Write the runtime environment file.
+  - |
+    cat > /opt/app/.env <<'EOF'
+    APP_ENV=${app_env}
+    APP_PORT=${app_port}
+    EOF
+
+  # Lock down ownership before anything else runs as appuser.
+  - chown -R appuser:appuser /opt/app
+  - chmod 640 /opt/app/.env
+
+  # Create the virtual environment and install dependencies.
+  - python3.11 -m venv /opt/app/.venv
+  - /opt/app/.venv/bin/pip install --quiet --upgrade pip
+  - /opt/app/.venv/bin/pip install --quiet -r /opt/app/requirements.txt
+
+  # Load the new systemd unit and start the app.
+  - systemctl daemon-reload
+  - systemctl enable app
+  - systemctl start app
+
+  # Enable and configure nginx as a reverse proxy (port 80 → app_port).
+  - ln -sf /etc/nginx/sites-available/app /etc/nginx/sites-enabled/app
+  - rm -f /etc/nginx/sites-enabled/default
+  - nginx -t
+  - systemctl enable nginx
+  - systemctl restart nginx

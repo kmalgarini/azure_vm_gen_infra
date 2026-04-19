@@ -1,0 +1,204 @@
+# ---------------------------------------------------------------------------
+# Locals
+# ---------------------------------------------------------------------------
+
+locals {
+  tags = {
+    environment = var.environment
+    managed_by  = "terraform"
+    project     = "azure-vm-python"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Resource Group
+# ---------------------------------------------------------------------------
+
+resource "azurerm_resource_group" "main" {
+  name     = var.resource_group_name
+  location = var.location
+  tags     = local.tags
+}
+
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+
+resource "azurerm_virtual_network" "main" {
+  name                = "vnet-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  address_space       = [var.vnet_address_space]
+  tags                = local.tags
+}
+
+resource "azurerm_subnet" "app" {
+  name                 = "snet-app"
+  resource_group_name  = azurerm_resource_group.main.name
+  virtual_network_name = azurerm_virtual_network.main.name
+  address_prefixes     = [var.subnet_address_prefix]
+}
+
+# ---------------------------------------------------------------------------
+# Network Security Group
+# ---------------------------------------------------------------------------
+
+resource "azurerm_network_security_group" "app" {
+  name                = "nsg-app-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tags                = local.tags
+
+  security_rule {
+    name                       = "allow-ssh"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = var.ssh_allowed_cidr
+    destination_address_prefix = "*"
+  }
+
+  security_rule {
+    name                       = "allow-app"
+    priority                   = 110
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = tostring(var.app_port)
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+}
+
+resource "azurerm_subnet_network_security_group_association" "app" {
+  subnet_id                 = azurerm_subnet.app.id
+  network_security_group_id = azurerm_network_security_group.app.id
+}
+
+# ---------------------------------------------------------------------------
+# Public IP
+# ---------------------------------------------------------------------------
+
+resource "azurerm_public_ip" "app" {
+  name                = "pip-app-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.tags
+}
+
+# ---------------------------------------------------------------------------
+# Network Interface
+# ---------------------------------------------------------------------------
+
+resource "azurerm_network_interface" "app" {
+  name                = "nic-app-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  tags                = local.tags
+
+  ip_configuration {
+    name                          = "ipconfig-app"
+    subnet_id                     = azurerm_subnet.app.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.app.id
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Linux Virtual Machine
+# ---------------------------------------------------------------------------
+
+resource "azurerm_linux_virtual_machine" "app_vm" {
+  name                = "vm-app-${var.environment}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  size                = var.vm_size
+  admin_username      = var.admin_username
+  tags                = local.tags
+
+  network_interface_ids = [
+    azurerm_network_interface.app.id,
+  ]
+
+  admin_ssh_key {
+    username   = var.admin_username
+    public_key = file(pathexpand(var.ssh_public_key_path))
+  }
+
+  os_disk {
+    name                 = "osdisk-app-${var.environment}"
+    caching              = "ReadWrite"
+    storage_account_type = "Premium_LRS"
+    disk_size_gb         = var.os_disk_size_gb
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "ubuntu-24_04-lts"
+    sku       = "server"
+    version   = "latest"
+  }
+
+  # cloud-init script: installs Python, clones the app, and starts it via systemd.
+  # templatefile() injects Terraform variables into the YAML template before
+  # base64-encoding it as custom_data.
+  custom_data = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
+    app_repo = var.app_repo_url
+    app_port = tostring(var.app_port)
+    app_env  = var.environment
+  }))
+
+  # Disable password authentication — SSH key only.
+  disable_password_authentication = true
+
+  # Boot diagnostics helps diagnose startup / cloud-init failures.
+  boot_diagnostics {}
+}
+
+# ---------------------------------------------------------------------------
+# Bootstrap Verification
+#
+# Waits for cloud-init to complete and confirms the app service is active
+# before terraform apply returns. Prevents a "success" with a broken app.
+# ---------------------------------------------------------------------------
+
+resource "null_resource" "wait_for_app" {
+  depends_on = [
+    azurerm_linux_virtual_machine.app_vm,
+    azurerm_subnet_network_security_group_association.app,
+  ]
+
+  triggers = {
+    vm_id       = azurerm_linux_virtual_machine.app_vm.id
+    cloud_init  = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
+      app_repo = var.app_repo_url
+      app_port = tostring(var.app_port)
+      app_env  = var.environment
+    }))
+  }
+
+  connection {
+    type        = "ssh"
+    host        = azurerm_public_ip.app.ip_address
+    user        = var.admin_username
+    private_key = file(pathexpand(var.ssh_private_key_path))
+    timeout     = "${var.app_startup_timeout}s"
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      # Block until cloud-init finishes all modules.
+      "cloud-init status --wait --long",
+      # Assert the app service is running.
+      "systemctl is-active --quiet app && echo '✓ app service is active'",
+      # Print the last 20 lines of the app journal for visibility.
+      "journalctl -u app -n 20 --no-pager",
+    ]
+  }
+}

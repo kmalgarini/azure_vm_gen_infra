@@ -1,0 +1,77 @@
+name: Deploy App
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy.yml"
+
+  workflow_dispatch:
+    inputs:
+      vm_host:
+        description: "VM public IP (leave blank to use VM_HOST secret)"
+        required: false
+
+jobs:
+  deploy:
+    name: SSH deploy to Azure VM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target host
+        id: host
+        run: |
+          HOST="${{ github.event.inputs.vm_host || secrets.VM_HOST }}"
+          if [ -z "$HOST" ]; then
+            echo "ERROR: VM_HOST secret is not set and no manual input was provided."
+            exit 1
+          fi
+          echo "value=$HOST" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ steps.host.outputs.value }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            echo "→ Pulling latest code ..."
+            cd /opt/app
+            sudo git pull
+
+            echo "→ Installing dependencies ..."
+            sudo /opt/app/.venv/bin/pip install --quiet -r requirements.txt
+
+            echo "→ Restarting app service ..."
+            sudo systemctl restart app
+
+            echo "→ Verifying service is active ..."
+            sleep 3
+            systemctl is-active --quiet app && echo "✓ app service is running"
+
+            echo "→ Last 20 log lines:"
+            journalctl -u app -n 20 --no-pager
+
+      - name: Health check
+        run: |
+          HOST="${{ steps.host.outputs.value }}"
+          PORT="${{ secrets.APP_PORT || '8000' }}"
+          echo "→ Checking http://$HOST:$PORT/health ..."
+          for i in {1..5}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$HOST:$PORT/health" || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "✓ Health check passed (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "  Attempt $i/5 — got HTTP $STATUS, retrying in 5s ..."
+            sleep 5
+          done
+          echo "✗ Health check failed after 5 attempts"
+          exit 1

@@ -1,0 +1,28 @@
+[Unit]
+Description=Python Application
+Documentation=https://github.com/
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=appuser
+Group=appuser
+WorkingDirectory=/opt/app
+EnvironmentFile=/opt/app/.env
+ExecStart=/opt/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=app
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/app
+
+[Install]
+WantedBy=multi-user.target
