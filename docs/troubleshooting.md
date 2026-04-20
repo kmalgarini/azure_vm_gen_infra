@@ -6,6 +6,42 @@ Common errors and how to resolve them.
 
 ## `terraform apply` Errors
 
+### Error: Azure Monitor Agent extension provisioning failed
+
+Example:
+
+```
+Error: creating/updating Virtual Machine Extension
+Code="VMExtensionProvisioningError"
+```
+
+**Cause**: The extension image can't be reached, VM provisioning is still in progress, or the agent install script failed on first attempt.
+
+**Diagnosis**:
+```bash
+# Show extension provisioning state
+az vm extension list \
+  --resource-group rg-vm-python \
+  --vm-name vm-app-dev \
+  --output table
+
+# Get detailed extension status
+az vm extension show \
+  --resource-group rg-vm-python \
+  --vm-name vm-app-dev \
+  --name AzureMonitorLinuxAgent \
+  --output json
+```
+
+**Fix**: Re-run `terraform apply`. If it still fails, verify outbound connectivity from the VM and check Azure regional service health. As a last resort, taint and recreate the VM:
+```bash
+cd terraform
+terraform taint azurerm_linux_virtual_machine.app_vm
+terraform apply
+```
+
+---
+
 ### Error: `ssh_public_key_path` file not found
 
 ```

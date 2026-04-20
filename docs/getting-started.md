@@ -109,7 +109,7 @@ make plan
 # equivalent: cd terraform && terraform plan -out=tfplan
 ```
 
-Review the output. You should see approximately **7 resources** to be created:
+Review the output. You should see approximately **10 resources** to be created:
 
 | # | Resource |
 |---|---------|
@@ -121,7 +121,8 @@ Review the output. You should see approximately **7 resources** to be created:
 | 6 | `azurerm_public_ip.app` |
 | 7 | `azurerm_network_interface.app` |
 | 8 | `azurerm_linux_virtual_machine.app_vm` |
-| 9 | `null_resource.wait_for_app` |
+| 9 | `azurerm_virtual_machine_extension.azure_monitor_agent` |
+| 10 | `null_resource.wait_for_app` |
 
 ---
 
@@ -135,8 +136,9 @@ make apply
 What happens during `terraform apply`:
 
 1. All Azure resources are created in order.
-2. The VM starts up; Azure injects the rendered cloud-init script as `custom_data`.
-3. cloud-init runs on first boot (takes 3–8 minutes):
+2. Terraform installs the Azure Monitor Agent extension (`AzureMonitorLinuxAgent`).
+3. The VM starts up; Azure injects the rendered cloud-init script as `custom_data`.
+4. cloud-init runs on first boot (takes 3–8 minutes):
    - Upgrades packages
    - Installs Python 3.11, git, nginx
    - Creates `appuser` system user
@@ -144,8 +146,8 @@ What happens during `terraform apply`:
    - Creates a virtualenv and installs `requirements.txt`
    - Writes and enables the `app.service` systemd unit
    - Configures nginx as a reverse proxy on port 80
-4. The `null_resource.wait_for_app` SSHes in and runs `cloud-init status --wait`.
-5. Once cloud-init exits successfully and `systemctl is-active app` confirms the service is running, `terraform apply` completes.
+5. The `null_resource.wait_for_app` SSHes in and runs `cloud-init status --wait`.
+6. Once cloud-init exits successfully and `systemctl is-active app` confirms the service is running, `terraform apply` completes.
 
 Expected terminal output at the end:
 
@@ -153,7 +155,7 @@ Expected terminal output at the end:
 null_resource.wait_for_app (remote-exec): ✓ app service is active
 null_resource.wait_for_app: Creation complete
 
-Apply complete! Resources: 9 added.
+Apply complete! Resources: 10 added.
 
 Outputs:
   app_url     = "http://20.1.2.3:8000"

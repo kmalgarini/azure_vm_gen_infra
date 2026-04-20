@@ -162,6 +162,25 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
 }
 
 # ---------------------------------------------------------------------------
+# Azure Monitor Agent (AMA)
+#
+# Installs automatically as a VM extension during provisioning.
+# ---------------------------------------------------------------------------
+
+resource "azurerm_virtual_machine_extension" "azure_monitor_agent" {
+  name                 = "AzureMonitorLinuxAgent"
+  virtual_machine_id   = azurerm_linux_virtual_machine.app_vm.id
+  publisher            = "Microsoft.Azure.Monitor"
+  type                 = "AzureMonitorLinuxAgent"
+  type_handler_version = "1.33"
+
+  auto_upgrade_minor_version = true
+  automatic_upgrade_enabled  = true
+
+  tags = local.tags
+}
+
+# ---------------------------------------------------------------------------
 # Bootstrap Verification
 #
 # Waits for cloud-init to complete and confirms the app service is active
@@ -171,6 +190,7 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
 resource "null_resource" "wait_for_app" {
   depends_on = [
     azurerm_linux_virtual_machine.app_vm,
+    azurerm_virtual_machine_extension.azure_monitor_agent,
     azurerm_subnet_network_security_group_association.app,
   ]
 

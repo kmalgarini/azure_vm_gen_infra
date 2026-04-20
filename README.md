@@ -5,6 +5,7 @@ Provision a production-ready Azure Linux VM and have your Python application **r
 ```
 terraform apply
   → Resource Group, VNet, NSG, Public IP, VM created
+  → Azure Monitor Agent extension installed on the VM
   → cloud-init bootstraps the VM on first boot:
       installs Python 3.11, clones your repo, creates a venv,
       installs dependencies, and starts the app via systemd
@@ -149,14 +150,15 @@ Replace `app/` with your own project. The only requirements are:
 ## How Bootstrap Works
 
 1. `terraform apply` creates the VM with the cloud-init template in `custom_data`
-2. Azure runs cloud-init on first boot — it:
+2. Terraform installs the Azure Monitor Agent VM extension automatically.
+3. Azure runs cloud-init on first boot — it:
    - Updates packages and installs Python 3.11, git, nginx
    - Creates a system user `appuser`
    - Clones `app_repo_url` → `/opt/app`
    - Creates a virtualenv, installs `requirements.txt`
    - Writes a systemd unit and starts the `app` service
    - Configures nginx to proxy port 80 → app port
-3. A Terraform `null_resource` SSHes in and runs `cloud-init status --wait` — `terraform apply` only exits after the service is confirmed active
+4. A Terraform `null_resource` SSHes in and runs `cloud-init status --wait` — `terraform apply` only exits after the service is confirmed active
 
 ---
 
