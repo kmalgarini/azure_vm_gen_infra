@@ -111,3 +111,29 @@ variable "app_startup_timeout" {
   type        = number
   default     = 600
 }
+
+# ---------------------------------------------------------------------------
+# Restocking File Generator
+# ---------------------------------------------------------------------------
+
+variable "restocking_dtrs_per_batch" {
+  description = "Number of DTR numbers written into each BCR batch file per generator tick."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.restocking_dtrs_per_batch >= 1
+    error_message = "restocking_dtrs_per_batch must be >= 1."
+  }
+}
+
+variable "restocking_fail_rate" {
+  description = "Probability (0–1) that a DTR lifecycle is abandoned after the 940 is written. Exercises the stale/not_started monitor path."
+  type        = number
+  default     = 0.05
+
+  validation {
+    condition     = var.restocking_fail_rate >= 0 && var.restocking_fail_rate <= 1
+    error_message = "restocking_fail_rate must be between 0 and 1."
+  }
+}

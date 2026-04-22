@@ -6,9 +6,11 @@
 # base64-encoded and passed as custom_data to the Azure VM.
 #
 # Template variables (replaced by Terraform):
-#   ${app_repo}  — Git URL of the Python application
-#   ${app_port}  — TCP port the app listens on
-#   ${app_env}   — Deployment environment (dev / staging / prod)
+#   ${app_repo}                   — Git URL of the Python application
+#   ${app_port}                   — TCP port the app listens on
+#   ${app_env}                    — Deployment environment (dev / staging / prod)
+#   ${restocking_dtrs_per_batch}  — DTRs per BCR batch (default 3)
+#   ${restocking_fail_rate}       — Lifecycle abandon probability (default 0.05)
 # ---------------------------------------------------------------------------
 
 package_update: true
@@ -22,7 +24,7 @@ packages:
   - nginx
   - curl
 
-# Write the systemd unit file and nginx config before runcmd executes.
+# Write systemd unit files and nginx config before runcmd executes.
 write_files:
   - path: /etc/systemd/system/app.service
     permissions: "0644"
@@ -57,6 +59,48 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
+  - path: /etc/systemd/system/restocking-generator.service
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Restocking File Generator (oneshot)
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      User=appuser
+      Group=appuser
+      WorkingDirectory=/opt/app
+      EnvironmentFile=/opt/app/.env
+      ExecStart=/opt/app/.venv/bin/python /opt/app/restocking_file_generator.py
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=restocking-generator
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ReadWritePaths=/opt/app /var/restocking
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/restocking-generator.timer
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Run Restocking File Generator every 5 minutes
+      Requires=restocking-generator.service
+
+      [Timer]
+      OnCalendar=*:0/5
+      Persistent=true
+      AccuracySec=10s
+
+      [Install]
+      WantedBy=timers.target
+
   - path: /etc/nginx/sites-available/app
     permissions: "0644"
     owner: root:root
@@ -88,6 +132,10 @@ runcmd:
     cat > /opt/app/.env <<'EOF'
     APP_ENV=${app_env}
     APP_PORT=${app_port}
+    RESTOCKING_INBOUND_DIR=/var/restocking/inbound
+    RESTOCKING_STATE_FILE=/opt/app/generator_state.json
+    RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}
+    RESTOCKING_FAIL_RATE=${restocking_fail_rate}
     EOF
 
   # Lock down ownership before anything else runs as appuser.
@@ -110,3 +158,11 @@ runcmd:
   - nginx -t
   - systemctl enable nginx
   - systemctl restart nginx
+
+  # Create the restocking inbound directory, owned by appuser.
+  - mkdir -p /var/restocking/inbound
+  - chown appuser:appuser /var/restocking/inbound
+
+  # Enable and start the restocking file generator timer.
+  - systemctl enable restocking-generator.timer
+  - systemctl start restocking-generator.timer

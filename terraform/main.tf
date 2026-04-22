@@ -149,9 +149,11 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
   # templatefile() injects Terraform variables into the YAML template before
   # base64-encoding it as custom_data.
   custom_data = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
-    app_repo = var.app_repo_url
-    app_port = tostring(var.app_port)
-    app_env  = var.environment
+    app_repo                   = var.app_repo_url
+    app_port                   = tostring(var.app_port)
+    app_env                    = var.environment
+    restocking_dtrs_per_batch  = tostring(var.restocking_dtrs_per_batch)
+    restocking_fail_rate       = tostring(var.restocking_fail_rate)
   }))
 
   # Disable password authentication — SSH key only.
@@ -195,11 +197,13 @@ resource "null_resource" "wait_for_app" {
   ]
 
   triggers = {
-    vm_id       = azurerm_linux_virtual_machine.app_vm.id
-    cloud_init  = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
-      app_repo = var.app_repo_url
-      app_port = tostring(var.app_port)
-      app_env  = var.environment
+    vm_id      = azurerm_linux_virtual_machine.app_vm.id
+    cloud_init = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
+      app_repo                  = var.app_repo_url
+      app_port                  = tostring(var.app_port)
+      app_env                   = var.environment
+      restocking_dtrs_per_batch = tostring(var.restocking_dtrs_per_batch)
+      restocking_fail_rate      = tostring(var.restocking_fail_rate)
     }))
   }
 
@@ -217,6 +221,7 @@ resource "null_resource" "wait_for_app" {
       "cloud-init status --wait --long",
       # Assert the app service is running.
       "systemctl is-active --quiet app && echo '✓ app service is active'",
+      "systemctl is-active --quiet restocking-generator.timer && echo '✓ restocking-generator.timer is active'",
       # Print the last 20 lines of the app journal for visibility.
       "journalctl -u app -n 20 --no-pager",
     ]
