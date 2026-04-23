@@ -56,9 +56,9 @@ variable "ssh_allowed_cidr" {
 # ---------------------------------------------------------------------------
 
 variable "vm_size" {
-  description = "Azure VM SKU. Standard_B2s is cost-effective for dev workloads."
+  description = "Azure VM SKU. Standard_B1s (1 vCPU, 1 GiB) is the smallest SKU that can run Python + nginx reliably. Use Standard_B1ls (0.5 GiB) only if memory is not a concern."
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_B1s"
 }
 
 variable "admin_username" {
