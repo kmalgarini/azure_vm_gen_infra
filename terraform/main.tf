@@ -154,6 +154,8 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
     app_env                    = var.environment
     restocking_dtrs_per_batch  = tostring(var.restocking_dtrs_per_batch)
     restocking_fail_rate       = tostring(var.restocking_fail_rate)
+    job_hold_ticks             = tostring(var.job_hold_ticks)
+    job_no_change_prob         = tostring(var.job_no_change_prob)
   }))
 
   # Disable password authentication — SSH key only.
@@ -204,6 +206,8 @@ resource "null_resource" "wait_for_app" {
       app_env                   = var.environment
       restocking_dtrs_per_batch = tostring(var.restocking_dtrs_per_batch)
       restocking_fail_rate      = tostring(var.restocking_fail_rate)
+      job_hold_ticks            = tostring(var.job_hold_ticks)
+      job_no_change_prob        = tostring(var.job_no_change_prob)
     }))
   }
 
@@ -222,6 +226,7 @@ resource "null_resource" "wait_for_app" {
       # Assert the app service is running.
       "systemctl is-active --quiet app && echo '✓ app service is active'",
       "systemctl is-active --quiet restocking-generator.timer && echo '✓ restocking-generator.timer is active'",
+      "systemctl is-active --quiet job-status-generator.timer && echo '✓ job-status-generator.timer is active'",
       # Print the last 20 lines of the app journal for visibility.
       "journalctl -u app -n 20 --no-pager",
     ]

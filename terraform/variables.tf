@@ -137,3 +137,29 @@ variable "restocking_fail_rate" {
     error_message = "restocking_fail_rate must be between 0 and 1."
   }
 }
+
+# ---------------------------------------------------------------------------
+# Job Status Generator
+# ---------------------------------------------------------------------------
+
+variable "job_hold_ticks" {
+  description = "Number of ticks a job remains in a terminal status (COMPLETED/FAILED/CANCELLED) before resetting to PENDING."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.job_hold_ticks >= 0
+    error_message = "job_hold_ticks must be >= 0."
+  }
+}
+
+variable "job_no_change_prob" {
+  description = "Probability (0–1, exclusive) that a job does not change status on a given tick. Higher values produce a more stable dataset."
+  type        = number
+  default     = 0.40
+
+  validation {
+    condition     = var.job_no_change_prob >= 0 && var.job_no_change_prob < 1
+    error_message = "job_no_change_prob must be in [0, 1)."
+  }
+}

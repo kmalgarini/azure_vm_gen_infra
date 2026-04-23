@@ -11,6 +11,8 @@
 #   ${app_env}                    — Deployment environment (dev / staging / prod)
 #   ${restocking_dtrs_per_batch}  — DTRs per BCR batch (default 3)
 #   ${restocking_fail_rate}       — Lifecycle abandon probability (default 0.05)
+#   ${job_hold_ticks}             — Ticks to hold terminal job status (default 2)
+#   ${job_no_change_prob}         — Probability a job stays in its current status (default 0.40)
 # ---------------------------------------------------------------------------
 
 package_update: true
@@ -101,6 +103,61 @@ write_files:
       [Install]
       WantedBy=timers.target
 
+  - path: /etc/systemd/system/job-status-generator.service
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Job Status Generator (oneshot)
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      User=appuser
+      Group=appuser
+      WorkingDirectory=/opt/app
+      EnvironmentFile=/opt/app/.env
+      ExecStart=/opt/app/.venv/bin/python /opt/app/job_status_generator.py
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=job-status-generator
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ReadWritePaths=/opt/app /var/jobs
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/job-status-generator.timer
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Run Job Status Generator every minute
+      Requires=job-status-generator.service
+
+      [Timer]
+      OnCalendar=*:*:00
+      Persistent=true
+      AccuracySec=5s
+
+      [Install]
+      WantedBy=timers.target
+
+  - path: /etc/logrotate.d/job-events
+    permissions: "0644"
+    owner: root:root
+    content: |
+      /var/jobs/events.jsonl {
+          daily
+          rotate 14
+          compress
+          missingok
+          notifempty
+          copytruncate
+      }
+
   - path: /etc/nginx/sites-available/app
     permissions: "0644"
     owner: root:root
@@ -136,6 +193,10 @@ runcmd:
     RESTOCKING_STATE_FILE=/opt/app/generator_state.json
     RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}
     RESTOCKING_FAIL_RATE=${restocking_fail_rate}
+    JOB_OUTPUT_DIR=/var/jobs
+    JOB_STATE_FILE=/opt/app/job_state.json
+    JOB_HOLD_TICKS=${job_hold_ticks}
+    JOB_NO_CHANGE_PROB=${job_no_change_prob}
     EOF
 
   # Lock down ownership before anything else runs as appuser.
@@ -166,3 +227,11 @@ runcmd:
   # Enable and start the restocking file generator timer.
   - systemctl enable restocking-generator.timer
   - systemctl start restocking-generator.timer
+
+  # Create the jobs output directory, owned by appuser.
+  - mkdir -p /var/jobs
+  - chown appuser:appuser /var/jobs
+
+  # Enable and start the job status generator timer.
+  - systemctl enable job-status-generator.timer
+  - systemctl start job-status-generator.timer
