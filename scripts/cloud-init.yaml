@@ -11,6 +11,7 @@
 #   ${app_env}                    — Deployment environment (dev / staging / prod)
 #   ${restocking_dtrs_per_batch}  — DTRs per BCR batch (default 3)
 #   ${restocking_fail_rate}       — Lifecycle abandon probability (default 0.05)
+#   ${restocking_artefact_retention_days} — Days to retain artefact files (default 7)
 #   ${job_hold_ticks}             — Ticks to hold terminal job status (default 2)
 #   ${job_no_change_prob}         — Probability a job stays in its current status (default 0.40)
 # ---------------------------------------------------------------------------
@@ -145,6 +146,47 @@ write_files:
       [Install]
       WantedBy=timers.target
 
+  - path: /etc/systemd/system/dtr-cleanup.service
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Delete DTR artefact files older than retention window
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      User=appuser
+      Group=appuser
+      EnvironmentFile=/opt/app/.env
+      ExecStart=/bin/bash -c 'find "$RESTOCKING_INBOUND_DIR" -maxdepth 1 -type f -mtime +$RESTOCKING_ARTEFACT_RETENTION_DAYS -delete && echo "DTR cleanup complete"'
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=dtr-cleanup
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectSystem=strict
+      ReadWritePaths=/var/restocking
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/dtr-cleanup.timer
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [Unit]
+      Description=Daily DTR artefact cleanup at 02:00 UTC
+      Requires=dtr-cleanup.service
+
+      [Timer]
+      OnCalendar=*-*-* 02:00:00 UTC
+      Persistent=true
+      AccuracySec=5m
+
+      [Install]
+      WantedBy=timers.target
+
   - path: /etc/logrotate.d/job-events
     permissions: "0644"
     owner: root:root
@@ -193,6 +235,7 @@ runcmd:
     RESTOCKING_STATE_FILE=/opt/app/generator_state.json
     RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}
     RESTOCKING_FAIL_RATE=${restocking_fail_rate}
+    RESTOCKING_ARTEFACT_RETENTION_DAYS=${restocking_artefact_retention_days}
     JOB_OUTPUT_DIR=/var/jobs
     JOB_STATE_FILE=/opt/app/job_state.json
     JOB_HOLD_TICKS=${job_hold_ticks}
@@ -235,3 +278,7 @@ runcmd:
   # Enable and start the job status generator timer.
   - systemctl enable job-status-generator.timer
   - systemctl start job-status-generator.timer
+
+  # Enable and start the DTR artefact cleanup timer (runs daily at 02:00 UTC).
+  - systemctl enable dtr-cleanup.timer
+  - systemctl start dtr-cleanup.timer

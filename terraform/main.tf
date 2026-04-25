@@ -149,13 +149,14 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
   # templatefile() injects Terraform variables into the YAML template before
   # base64-encoding it as custom_data.
   custom_data = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
-    app_repo                   = var.app_repo_url
-    app_port                   = tostring(var.app_port)
-    app_env                    = var.environment
-    restocking_dtrs_per_batch  = tostring(var.restocking_dtrs_per_batch)
-    restocking_fail_rate       = tostring(var.restocking_fail_rate)
-    job_hold_ticks             = tostring(var.job_hold_ticks)
-    job_no_change_prob         = tostring(var.job_no_change_prob)
+    app_repo                           = var.app_repo_url
+    app_port                           = tostring(var.app_port)
+    app_env                            = var.environment
+    restocking_dtrs_per_batch          = tostring(var.restocking_dtrs_per_batch)
+    restocking_fail_rate               = tostring(var.restocking_fail_rate)
+    restocking_artefact_retention_days = tostring(var.restocking_artefact_retention_days)
+    job_hold_ticks                     = tostring(var.job_hold_ticks)
+    job_no_change_prob                 = tostring(var.job_no_change_prob)
   }))
 
   # Disable password authentication — SSH key only.
@@ -199,15 +200,16 @@ resource "null_resource" "wait_for_app" {
   ]
 
   triggers = {
-    vm_id      = azurerm_linux_virtual_machine.app_vm.id
+    vm_id = azurerm_linux_virtual_machine.app_vm.id
     cloud_init = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
-      app_repo                  = var.app_repo_url
-      app_port                  = tostring(var.app_port)
-      app_env                   = var.environment
-      restocking_dtrs_per_batch = tostring(var.restocking_dtrs_per_batch)
-      restocking_fail_rate      = tostring(var.restocking_fail_rate)
-      job_hold_ticks            = tostring(var.job_hold_ticks)
-      job_no_change_prob        = tostring(var.job_no_change_prob)
+      app_repo                           = var.app_repo_url
+      app_port                           = tostring(var.app_port)
+      app_env                            = var.environment
+      restocking_dtrs_per_batch          = tostring(var.restocking_dtrs_per_batch)
+      restocking_fail_rate               = tostring(var.restocking_fail_rate)
+      restocking_artefact_retention_days = tostring(var.restocking_artefact_retention_days)
+      job_hold_ticks                     = tostring(var.job_hold_ticks)
+      job_no_change_prob                 = tostring(var.job_no_change_prob)
     }))
   }
 
@@ -227,6 +229,7 @@ resource "null_resource" "wait_for_app" {
       "systemctl is-active --quiet app && echo '✓ app service is active'",
       "systemctl is-active --quiet restocking-generator.timer && echo '✓ restocking-generator.timer is active'",
       "systemctl is-active --quiet job-status-generator.timer && echo '✓ job-status-generator.timer is active'",
+      "systemctl is-active --quiet dtr-cleanup.timer && echo '✓ dtr-cleanup.timer is active'",
       # Print the last 20 lines of the app journal for visibility.
       "journalctl -u app -n 20 --no-pager",
     ]

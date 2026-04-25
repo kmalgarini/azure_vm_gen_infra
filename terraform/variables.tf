@@ -138,6 +138,17 @@ variable "restocking_fail_rate" {
   }
 }
 
+variable "restocking_artefact_retention_days" {
+  description = "Number of days to retain DTR artefact files in the restocking inbound directory. Files older than this are deleted daily at 02:00 UTC."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.restocking_artefact_retention_days >= 1
+    error_message = "restocking_artefact_retention_days must be >= 1."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Job Status Generator
 # ---------------------------------------------------------------------------
