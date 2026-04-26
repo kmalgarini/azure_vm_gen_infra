@@ -8,6 +8,15 @@ locals {
     managed_by  = "terraform"
     project     = "azure-vm-python"
   }
+
+  # NSG: service tags (VirtualNetwork, Internet, etc.) are only valid on
+  # source_address_prefix. source_address_prefixes is CIDR-only; mixing
+  # tags with CIDRs in the same rule returns SecurityRuleParameterContainsUnsupportedValue.
+  app_nsg_inbound_cidrs = [for p in var.app_inbound_source_prefixes : p if can(cidrnetmask(p))]
+  app_nsg_inbound_tags  = [for p in var.app_inbound_source_prefixes : p if !can(cidrnetmask(p))]
+
+  app_nsg_inbound_base_priority      = 110
+  app_nsg_inbound_cidr_rule_priority = local.app_nsg_inbound_base_priority + length(local.app_nsg_inbound_tags)
 }
 
 # ---------------------------------------------------------------------------
@@ -61,18 +70,35 @@ resource "azurerm_network_security_group" "app" {
     destination_address_prefix = "*"
   }
 
-  # HTTP + app: only from listed prefixes (default: VirtualNetwork = private
-  # in-VNet and peered-VNet; not 0.0.0.0/0). See variable app_inbound_source_prefixes.
-  security_rule {
-    name                       = "allow-app-http"
-    priority                   = 110
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    source_address_prefixes    = var.app_inbound_source_prefixes
-    destination_port_ranges    = [tostring(var.app_port), "80"]
-    destination_address_prefix = "*"
+  # HTTP + app: one rule per service tag, plus one for all CIDRs (see locals).
+  dynamic "security_rule" {
+    for_each = { for i, t in local.app_nsg_inbound_tags : i => t }
+    content {
+      name                       = "allow-app-in-${lower(replace(security_rule.value, "*", "any"))}"
+      priority                   = local.app_nsg_inbound_base_priority + security_rule.key
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = "Tcp"
+      source_port_range          = "*"
+      source_address_prefix      = security_rule.value
+      destination_port_ranges    = [tostring(var.app_port), "80"]
+      destination_address_prefix = "*"
+    }
+  }
+
+  dynamic "security_rule" {
+    for_each = length(local.app_nsg_inbound_cidrs) > 0 ? { 0 = true } : {}
+    content {
+      name                       = "allow-app-in-cidrs"
+      priority                   = local.app_nsg_inbound_cidr_rule_priority
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = "Tcp"
+      source_port_range          = "*"
+      source_address_prefixes    = local.app_nsg_inbound_cidrs
+      destination_port_ranges    = [tostring(var.app_port), "80"]
+      destination_address_prefix = "*"
+    }
   }
 }
 

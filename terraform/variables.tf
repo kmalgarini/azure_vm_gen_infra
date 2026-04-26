@@ -67,6 +67,9 @@ variable "app_inbound_source_prefixes" {
         VNet, or use a self-hosted runner in the VNet.
     The default locks the app to private VNet traffic only (not the public
     internet).
+
+    Service tags and CIDRs are emitted as separate NSG rules: Azure only
+    allows tags on source_address_prefix, not in source_address_prefixes.
   EOT
   type        = list(string)
   default     = ["VirtualNetwork"]
