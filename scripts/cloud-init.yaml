@@ -226,8 +226,9 @@ write_files:
 # "systemctl start app" and leave .env/venv missing. Abort on any failure.
 runcmd:
   - |
-    set -euxo pipefail
-    if ! id -u appuser &>/dev/null; then
+    # /bin/sh on Ubuntu is dash: no "pipefail" and no &>. POSIX-only.
+    set -eux
+    if ! id -u appuser >/dev/null 2>&1; then
       useradd --system --shell /usr/sbin/nologin --home-dir /opt/app appuser
     fi
     git clone ${app_repo} /opt/app
