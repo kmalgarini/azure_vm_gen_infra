@@ -221,66 +221,50 @@ write_files:
           }
       }
 
+# Single script: cloud-init runs each runcmd list item in separate shells
+# and does not stop on error, so a failed git/pip used to still run
+# "systemctl start app" and leave .env/venv missing. Abort on any failure.
 runcmd:
-  # Create a system user with no login shell for running the app.
-  - useradd --system --shell /usr/sbin/nologin --home-dir /opt/app appuser
-
-  # Clone the application repository.
-  - git clone ${app_repo} /opt/app
-
-  # Write the runtime environment file.
   - |
-    cat > /opt/app/.env <<'EOF'
-    APP_ENV=${app_env}
-    APP_PORT=${app_port}
-    RESTOCKING_INBOUND_DIR=/var/restocking/inbound
-    RESTOCKING_STATE_FILE=/opt/app/generator_state.json
-    RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}
-    RESTOCKING_FAIL_RATE=${restocking_fail_rate}
-    RESTOCKING_ARTEFACT_RETENTION_DAYS=${restocking_artefact_retention_days}
-    JOB_OUTPUT_DIR=/var/jobs
-    JOB_STATE_FILE=/opt/app/job_state.json
-    JOB_HOLD_TICKS=${job_hold_ticks}
-    JOB_NO_CHANGE_PROB=${job_no_change_prob}
-    EOF
-
-  # Lock down ownership before anything else runs as appuser.
-  - chown -R appuser:appuser /opt/app
-  - chmod 640 /opt/app/.env
-
-  # Create the virtual environment and install dependencies.
-  - python3 -m venv /opt/app/.venv
-  - /opt/app/.venv/bin/pip install --quiet --upgrade pip
-  - /opt/app/.venv/bin/pip install --quiet -r /opt/app/app/requirements.txt
-
-  # Load the new systemd unit and start the app.
-  - systemctl daemon-reload
-  - systemctl enable app
-  - systemctl start app
-
-  # Enable and configure nginx as a reverse proxy (port 80 → app_port).
-  - ln -sf /etc/nginx/sites-available/app /etc/nginx/sites-enabled/app
-  - rm -f /etc/nginx/sites-enabled/default
-  - nginx -t
-  - systemctl enable nginx
-  - systemctl restart nginx
-
-  # Create the restocking inbound directory, owned by appuser.
-  - mkdir -p /var/restocking/inbound
-  - chown appuser:appuser /var/restocking/inbound
-
-  # Enable and start the restocking file generator timer.
-  - systemctl enable restocking-generator.timer
-  - systemctl start restocking-generator.timer
-
-  # Create the jobs output directory, owned by appuser.
-  - mkdir -p /var/jobs
-  - chown appuser:appuser /var/jobs
-
-  # Enable and start the job status generator timer.
-  - systemctl enable job-status-generator.timer
-  - systemctl start job-status-generator.timer
-
-  # Enable and start the DTR artefact cleanup timer (runs daily at 02:00 UTC).
-  - systemctl enable dtr-cleanup.timer
-  - systemctl start dtr-cleanup.timer
+    set -euxo pipefail
+    if ! id -u appuser &>/dev/null; then
+      useradd --system --shell /usr/sbin/nologin --home-dir /opt/app appuser
+    fi
+    git clone ${app_repo} /opt/app
+    # printf avoids a bash heredoc: indented closers (ENVEOF) do not end <<'E' blocks.
+    printf '%s\n' \
+      "APP_ENV=${app_env}" \
+      "APP_PORT=${app_port}" \
+      "RESTOCKING_INBOUND_DIR=/var/restocking/inbound" \
+      "RESTOCKING_STATE_FILE=/opt/app/generator_state.json" \
+      "RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}" \
+      "RESTOCKING_FAIL_RATE=${restocking_fail_rate}" \
+      "RESTOCKING_ARTEFACT_RETENTION_DAYS=${restocking_artefact_retention_days}" \
+      "JOB_OUTPUT_DIR=/var/jobs" \
+      "JOB_STATE_FILE=/opt/app/job_state.json" \
+      "JOB_HOLD_TICKS=${job_hold_ticks}" \
+      "JOB_NO_CHANGE_PROB=${job_no_change_prob}" \
+      > /opt/app/.env
+    chown -R appuser:appuser /opt/app
+    chmod 640 /opt/app/.env
+    test -f /opt/app/app/requirements.txt
+    python3 -m venv /opt/app/.venv
+    /opt/app/.venv/bin/pip install --quiet --upgrade pip
+    /opt/app/.venv/bin/pip install --quiet -r /opt/app/app/requirements.txt
+    test -x /opt/app/.venv/bin/uvicorn
+    mkdir -p /var/restocking/inbound /var/jobs
+    chown appuser:appuser /var/restocking/inbound /var/jobs
+    systemctl daemon-reload
+    systemctl enable app
+    systemctl start app
+    ln -sf /etc/nginx/sites-available/app /etc/nginx/sites-enabled/app
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t
+    systemctl enable nginx
+    systemctl restart nginx
+    systemctl enable restocking-generator.timer
+    systemctl start restocking-generator.timer
+    systemctl enable job-status-generator.timer
+    systemctl start job-status-generator.timer
+    systemctl enable dtr-cleanup.timer
+    systemctl start dtr-cleanup.timer

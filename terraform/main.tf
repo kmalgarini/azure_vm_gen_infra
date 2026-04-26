@@ -254,17 +254,11 @@ resource "null_resource" "wait_for_app" {
     timeout     = "${var.app_startup_timeout}s"
   }
 
+  # One shell: remote-exec runs each list element separately, so a failed
+  # is-active was previously masked if a later command exited 0.
   provisioner "remote-exec" {
     inline = [
-      # Block until cloud-init finishes all modules.
-      "cloud-init status --wait --long",
-      # Assert the app service is running.
-      "systemctl is-active --quiet app && echo '✓ app service is active'",
-      "systemctl is-active --quiet restocking-generator.timer && echo '✓ restocking-generator.timer is active'",
-      "systemctl is-active --quiet job-status-generator.timer && echo '✓ job-status-generator.timer is active'",
-      "systemctl is-active --quiet dtr-cleanup.timer && echo '✓ dtr-cleanup.timer is active'",
-      # Print the last 20 lines of the app journal for visibility.
-      "journalctl -u app -n 20 --no-pager",
+      "bash -c 'set -euo pipefail; cloud-init status --wait --long; systemctl is-active --quiet app; echo \"ok: app is active\"; systemctl is-active --quiet restocking-generator.timer; systemctl is-active --quiet job-status-generator.timer; systemctl is-active --quiet dtr-cleanup.timer; journalctl -u app -n 20 --no-pager'",
     ]
   }
 }
