@@ -200,12 +200,17 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
 }
 
 # ---------------------------------------------------------------------------
-# Azure Monitor Agent (AMA)
-#
-# Installs automatically as a VM extension during provisioning.
+# Azure Monitor Agent (AMA) — optional VM extension
 # ---------------------------------------------------------------------------
 
+moved {
+  from = azurerm_virtual_machine_extension.azure_monitor_agent
+  to   = azurerm_virtual_machine_extension.azure_monitor_agent[0]
+}
+
 resource "azurerm_virtual_machine_extension" "azure_monitor_agent" {
+  count = var.enable_azure_monitor_agent ? 1 : 0
+
   name                 = "AzureMonitorLinuxAgent"
   virtual_machine_id   = azurerm_linux_virtual_machine.app_vm.id
   publisher            = "Microsoft.Azure.Monitor"
@@ -228,7 +233,6 @@ resource "azurerm_virtual_machine_extension" "azure_monitor_agent" {
 resource "null_resource" "wait_for_app" {
   depends_on = [
     azurerm_linux_virtual_machine.app_vm,
-    azurerm_virtual_machine_extension.azure_monitor_agent,
     azurerm_subnet_network_security_group_association.app,
   ]
 

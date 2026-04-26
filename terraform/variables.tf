@@ -115,6 +115,19 @@ variable "os_disk_size_gb" {
   default     = 30
 }
 
+variable "enable_azure_monitor_agent" {
+  description = <<-EOT
+    Install the Azure Monitor Agent as a VM extension. Default is false: the
+    Microsoft.Azure.Monitor AzureMonitorLinuxAgent extension often fails on
+    Ubuntu 24.04 (e.g. "Unit azuremonitoragent.service could not be found").
+    You can use Azure Policy / manual install, switch to a supported image (e.g.
+    Ubuntu 22.04 LTS) for the extension, or re-enable this when a compatible
+    extension version is available.
+  EOT
+  type        = bool
+  default     = false
+}
+
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
