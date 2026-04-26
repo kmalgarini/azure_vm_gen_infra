@@ -51,6 +51,32 @@ variable "ssh_allowed_cidr" {
   default     = "0.0.0.0/0"
 }
 
+variable "app_inbound_source_prefixes" {
+  description = <<-EOT
+    NSG source prefixes for inbound access to the HTTP / app ports
+    (nginx on 80, FastAPI on app_port, both TCP).
+
+    Azure does not support "this subscription only" in an NSG. The usual
+    choices are:
+      - "VirtualNetwork"  — any address in this VNet and directly peered
+        VNets (internal traffic, other VMs in the same VNet, etc. — the
+        closest match to in-subscription private access).
+      - A /32 of your public IP  — to reach the app on the public IP from
+        a laptop. GitHub Actions health checks (outside Azure) will fail
+        unless you add the runner CIDR, run health checks from inside the
+        VNet, or use a self-hosted runner in the VNet.
+    The default locks the app to private VNet traffic only (not the public
+    internet).
+  EOT
+  type        = list(string)
+  default     = ["VirtualNetwork"]
+
+  validation {
+    condition     = length(var.app_inbound_source_prefixes) > 0
+    error_message = "app_inbound_source_prefixes must contain at least one prefix (e.g. VirtualNetwork or a CIDR)."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Virtual Machine
 # ---------------------------------------------------------------------------

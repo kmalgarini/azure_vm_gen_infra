@@ -61,15 +61,17 @@ resource "azurerm_network_security_group" "app" {
     destination_address_prefix = "*"
   }
 
+  # HTTP + app: only from listed prefixes (default: VirtualNetwork = private
+  # in-VNet and peered-VNet; not 0.0.0.0/0). See variable app_inbound_source_prefixes.
   security_rule {
-    name                       = "allow-app"
+    name                       = "allow-app-http"
     priority                   = 110
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
-    destination_port_range     = tostring(var.app_port)
-    source_address_prefix      = "*"
+    source_address_prefixes    = var.app_inbound_source_prefixes
+    destination_port_ranges    = [tostring(var.app_port), "80"]
     destination_address_prefix = "*"
   }
 }

@@ -13,7 +13,7 @@ terraform apply
   ├── Azure resources (RG, VNet, NSG, Public IP, NIC, VM)
   ├── Azure Monitor Agent extension installed on the VM
   ├── cloud-init bootstraps the VM on first boot:
-  │     installs Python 3.11, git, nginx
+  │     installs Python 3, git, nginx
   │     clones your repo → /opt/app
   │     creates a virtualenv, installs requirements.txt
   │     writes and starts systemd units for app + generators

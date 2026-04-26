@@ -140,7 +140,7 @@ What happens during `terraform apply`:
 3. The VM starts up; Azure injects the rendered cloud-init script as `custom_data`.
 4. cloud-init runs on first boot (takes 3–8 minutes):
    - Upgrades packages
-   - Installs Python 3.11, git, nginx
+   - Installs Python 3 (3.12 on Ubuntu 24.04), git, nginx
    - Creates `appuser` system user
    - Clones your repository to `/opt/app`
    - Creates a virtualenv and installs `requirements.txt`

@@ -149,7 +149,30 @@ ssh_allowed_cidr = "203.0.113.42/32"
 ssh_allowed_cidr = "10.10.0.0/16"
 ```
 
-> Port 80 and `app_port` are open to `*` by default. To restrict app access to specific CIDRs, edit the NSG rules in `terraform/main.tf`.
+---
+
+### `app_inbound_source_prefixes`
+
+| | |
+|-|-|
+| Type | `list(string)` |
+| Default | `["VirtualNetwork"]` |
+| Required | No |
+
+List of [NSG source address prefixes](https://learn.microsoft.com/en-us/azure/virtual-network/network-security-groups-overview#security-rules) (service tags and/or CIDRs) for inbound traffic to **port 80** (nginx) and **`app_port`** (FastAPI).
+
+There is no NSG value for "this subscription only." The default **`VirtualNetwork`** service tag is the standard way to allow only traffic from this VNet and directly peered VNets. That blocks the public internet from reaching the app on the VM's public IP, while still allowing other resources in the same VNet. Add your public `/32` (same as for SSH) if you need to open the app from a browser or to allow the GitHub Actions `curl` health check from the internet.
+
+```hcl
+# In-VNet + peered VNets only (no anonymous internet to HTTP/app)
+app_inbound_source_prefixes = ["VirtualNetwork"]
+
+# Also allow your home IP to hit :80 and :app_port on the public IP
+app_inbound_source_prefixes = [
+  "VirtualNetwork",
+  "203.0.113.42/32",
+]
+```
 
 ---
 

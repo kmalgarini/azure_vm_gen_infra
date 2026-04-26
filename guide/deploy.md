@@ -82,7 +82,7 @@ What happens during apply (5–12 minutes):
 1. Azure resources created (RG → VNet → Subnet → NSG → PIP → NIC → VM)
 2. AzureMonitorLinuxAgent extension installed on the VM
 3. VM first boot — cloud-init runs:
-     • apt upgrade + install Python 3.11, git, nginx
+     • apt upgrade + install Python 3, git, nginx
      • adduser appuser
      • git clone <app_repo_url> → /opt/app
      • python3 -m venv /opt/app/.venv && pip install -r requirements.txt

@@ -19,9 +19,11 @@
 package_update: true
 package_upgrade: true
 
+# Ubuntu 24.04 LTS default is Python 3.12. Pinning 3.11 can fail in apt
+# (package missing / mirror / non-universe). Use distro Python + venv.
 packages:
-  - python3.11
-  - python3.11-venv
+  - python3
+  - python3-venv
   - python3-pip
   - git
   - nginx
@@ -247,7 +249,7 @@ runcmd:
   - chmod 640 /opt/app/.env
 
   # Create the virtual environment and install dependencies.
-  - python3.11 -m venv /opt/app/.venv
+  - python3 -m venv /opt/app/.venv
   - /opt/app/.venv/bin/pip install --quiet --upgrade pip
   - /opt/app/.venv/bin/pip install --quiet -r /opt/app/app/requirements.txt
 

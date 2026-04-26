@@ -7,7 +7,7 @@ terraform apply
   → Resource Group, VNet, NSG, Public IP, VM created
   → Azure Monitor Agent extension installed on the VM
   → cloud-init bootstraps the VM on first boot:
-      installs Python 3.11, clones your repo, creates a venv,
+      installs Python 3 (3.12 on Ubuntu 24.04), clones your repo, creates a venv,
       installs dependencies, and starts the app via systemd
   → remote-exec waits for cloud-init to finish and confirms the app is active
   → terraform apply exits ✓
@@ -152,7 +152,7 @@ Replace `app/` with your own project. The only requirements are:
 1. `terraform apply` creates the VM with the cloud-init template in `custom_data`
 2. Terraform installs the Azure Monitor Agent VM extension automatically.
 3. Azure runs cloud-init on first boot — it:
-   - Updates packages and installs Python 3.11, git, nginx
+   - Updates packages and installs Python 3, git, nginx
    - Creates a system user `appuser`
    - Clones `app_repo_url` → `/opt/app`
    - Creates a virtualenv, installs `requirements.txt`

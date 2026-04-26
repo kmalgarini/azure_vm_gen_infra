@@ -52,7 +52,7 @@ terraform apply
   ├─ azurerm_linux_virtual_machine ──► boot VM with custom_data
   │                                                                 cloud-init starts
   │                                                                   apt upgrade
-  │                                                                   install: python3.11
+  │                                                                   install: python3 (3.12 on 24.04)
   │                                                                            pip, venv
   │                                                                            git, nginx
   │                                                                   adduser appuser
@@ -126,6 +126,8 @@ Internet → port 80 → nginx → 127.0.0.1:<app_port> → uvicorn (app.service
 Internet → port <app_port> → uvicorn (direct, via NSG rule)
 ```
 
+Inbound to ports 80 and `app_port` is allowed only for sources in `app_inbound_source_prefixes` (by default the **VirtualNetwork** service tag, so the public IP is not open to the whole internet unless you add a CIDR or `0.0.0.0/0`).
+
 Config written to `/etc/nginx/sites-enabled/app` by cloud-init:
 
 ```nginx
@@ -178,8 +180,7 @@ sudo systemctl restart app
 | Priority | Direction | Protocol | Port | Source | Action |
 |----------|-----------|----------|------|--------|--------|
 | 100 | Inbound | TCP | 22 | `ssh_allowed_cidr` | Allow |
-| 110 | Inbound | TCP | 80 | `*` | Allow |
-| 120 | Inbound | TCP | `app_port` | `*` | Allow |
+| 110 | Inbound | TCP | 80, `app_port` | `app_inbound_source_prefixes` (default: `VirtualNetwork` only) | Allow |
 | 65000 | Inbound | Any | Any | VirtualNetwork | Allow |
 | 65001 | Inbound | Any | Any | AzureLoadBalancer | Allow |
 | 65500 | Inbound | Any | Any | `*` | Deny |
