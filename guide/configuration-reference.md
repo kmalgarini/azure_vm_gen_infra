@@ -14,7 +14,7 @@ app_repo_url = "https://github.com/<org>/<repo>.git"   # required
 
 # ── General ──────────────────────────────────────────────────────────────────
 resource_group_name = "rg-vm-python"
-location            = "eastus"
+location            = "canadaeast"
 environment         = "dev"
 
 # ── Networking ───────────────────────────────────────────────────────────────
@@ -67,12 +67,12 @@ resource_group_name = "rg-myapp-prod"
 | | |
 |-|-|
 | Type | `string` |
-| Default | `"eastus"` |
+| Default | `"canadaeast"` |
 | Required | No |
 
 Azure region for all resources. All resources are placed in the same region.
 
-Common values: `eastus`, `eastus2`, `westus2`, `westeurope`, `northeurope`, `australiaeast`.
+Common values: `canadaeast`, `canadaeast2`, `westus2`, `westeurope`, `northeurope`, `australiaeast`.
 
 ```hcl
 location = "westeurope"
@@ -394,7 +394,7 @@ job_no_change_prob = 0.10   # high churn dataset
 app_repo_url        = "https://github.com/myorg/myapp.git"
 resource_group_name = "rg-vm-python-dev"
 environment         = "dev"
-location            = "eastus"
+location            = "canadaeast"
 vm_size             = "Standard_B1s"
 ssh_allowed_cidr    = "0.0.0.0/0"
 ```
@@ -405,7 +405,7 @@ ssh_allowed_cidr    = "0.0.0.0/0"
 app_repo_url        = "https://github.com/myorg/myapp.git"
 resource_group_name = "rg-vm-python-staging"
 environment         = "staging"
-location            = "eastus"
+location            = "canadaeast"
 vm_size             = "Standard_B2s"
 ssh_allowed_cidr    = "10.10.0.0/16"   # VPN only
 
@@ -421,7 +421,7 @@ job_no_change_prob        = 0.40
 app_repo_url        = "https://github.com/myorg/myapp.git"
 resource_group_name = "rg-vm-python-prod"
 environment         = "prod"
-location            = "eastus"
+location            = "canadaeast"
 vm_size             = "Standard_B4ms"
 os_disk_size_gb     = 64
 ssh_allowed_cidr    = "10.10.0.0/16"   # VPN only

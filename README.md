@@ -98,7 +98,7 @@ See [docs/getting-started.md](docs/getting-started.md) for a detailed walkthroug
 |----------|---------|----------|-------------|
 | `app_repo_url` | — | Yes | Git URL of your Python application |
 | `resource_group_name` | `rg-vm-python` | No | Azure resource group |
-| `location` | `eastus` | No | Azure region |
+| `location` | `canadaeast` | No | Azure region |
 | `vm_size` | `Standard_B2s` | No | VM SKU |
 | `app_port` | `8000` | No | App TCP port |
 | `ssh_allowed_cidr` | `0.0.0.0/0` | No | CIDR allowed to SSH (restrict in prod) |

@@ -95,16 +95,92 @@ az account show --query "{name:name, id:id}" --output table
 
 ### Non-interactive / CI environments
 
-Export a service principal instead of running `az login`:
+For CI pipelines or any context where `az login` is not available, create a **service principal** and export its credentials as environment variables.
+
+#### Step 1 — Find your Subscription ID
 
 ```bash
-export ARM_CLIENT_ID="<app-id>"
-export ARM_CLIENT_SECRET="<client-secret>"
-export ARM_TENANT_ID="<tenant-id>"
-export ARM_SUBSCRIPTION_ID="<subscription-id>"
+az account show --query "{name:name, id:id}" --output table
 ```
 
-See the [GitHub Actions section](#6-github-actions-cicd) for wiring these into a workflow.
+Note the `id` value — you will need it in the next step.
+
+#### Step 2 — Create a Service Principal
+
+This command creates a service principal named `azure-vm-deploy` and grants it **Contributor** access on your subscription. It prints `client_id`, `client_secret`, and `tenant_id` in one shot.
+
+```bash
+az ad sp create-for-rbac \
+  --name "azure-vm-deploy" \
+  --role Contributor \
+  --scopes "/subscriptions/<subscription-id>" \
+  --sdk-auth
+```
+
+Example output:
+
+```json
+{
+  "clientId":       "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "clientSecret":   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "subscriptionId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "tenantId":       "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+}
+```
+
+> `clientSecret` is only shown once. Copy it immediately — it cannot be retrieved later.
+
+If you prefer a narrower scope (only the resource group this project will create), run the command **after** the resource group exists:
+
+```bash
+az ad sp create-for-rbac \
+  --name "azure-vm-deploy" \
+  --role Contributor \
+  --scopes "/subscriptions/<subscription-id>/resourceGroups/rg-vm-python"
+```
+
+#### Step 3 — Retrieve values at any time
+
+If you need to look up the IDs later (the secret cannot be recovered, only rotated):
+
+```bash
+# List all service principals by display name
+az ad sp list --display-name "azure-vm-deploy" --query "[].{appId:appId, displayName:displayName}" --output table
+
+# Get your Tenant ID
+az account show --query tenantId --output tsv
+
+# Get your Subscription ID
+az account show --query id --output tsv
+```
+
+#### Step 4 — Rotate the secret (when needed)
+
+```bash
+# List existing credentials for the service principal
+az ad sp credential list --id "<client-id>" --output table
+
+# Add a new secret (valid for 1 year by default)
+az ad sp credential reset \
+  --id "<client-id>" \
+  --years 1 \
+  --query "{clientSecret:password}"
+```
+
+#### Step 5 — Export for local use
+
+```bash
+export ARM_CLIENT_ID="<clientId>"
+export ARM_CLIENT_SECRET="<clientSecret>"
+export ARM_TENANT_ID="<tenantId>"
+export ARM_SUBSCRIPTION_ID="<subscriptionId>"
+```
+
+Terraform and the AzureRM provider pick these up automatically — no change to `terraform.tfvars` needed.
+
+To make these permanent in your shell session, add them to `~/.zshrc` or `~/.bashrc` (for personal dev machines only — never commit secrets to version control).
+
+See the [GitHub Actions CI/CD Setup section](#9-github-actions-cicd-setup) for storing these as repository secrets.
 
 ---
 
@@ -137,7 +213,7 @@ app_repo_url = "https://github.com/<org>/<repo>.git"
 # Identity
 resource_group_name = "rg-vm-python-dev"
 environment         = "dev"
-location            = "eastus"
+location            = "canadaeast"
 
 # Security — restrict SSH to your current IP
 ssh_allowed_cidr = "YOUR_PUBLIC_IP/32"   # curl ifconfig.me
@@ -152,7 +228,7 @@ app_repo_url = "https://github.com/<org>/<repo>.git"
 # Identity
 resource_group_name = "rg-vm-python-prod"
 environment         = "prod"
-location            = "eastus"
+location            = "canadaeast"
 
 # Machine
 vm_size        = "Standard_B4ms"
@@ -351,15 +427,7 @@ systemctl is-active app
 
 ### GitHub Actions (automated)
 
-Push to `main` — the workflow in `.github/workflows/deploy.yml` deploys automatically.
-
-**One-time setup**: add these repository secrets in GitHub → Settings → Secrets and variables → Actions:
-
-| Secret | Value |
-|--------|-------|
-| `VM_HOST` | Public IP from `make output` |
-| `VM_USER` | `azureuser` |
-| `VM_SSH_KEY` | Contents of `~/.ssh/id_rsa` |
+Push to `main` — the workflow in `.github/workflows/deploy.yml` deploys automatically. See [section 9](#9-github-actions-cicd-setup) for the full setup walkthrough.
 
 ### Full re-provision (cloud-init change)
 
@@ -375,7 +443,193 @@ This destroys and recreates the VM. Data on the OS disk is lost.
 
 ---
 
-## 9. Security Hardening
+## 9. GitHub Actions CI/CD Setup
+
+The workflow in `.github/workflows/deploy.yml` automatically deploys the application to the VM on every push to `main` that touches `app/**`. It requires the VM to be provisioned first (`make apply` must have completed successfully).
+
+### What the workflow does
+
+```
+push to main (app/** changed)
+  └── job: SSH deploy to Azure VM
+        1. Checkout code
+        2. Resolve target host (VM_HOST secret or manual vm_host input)
+        3. SSH into VM (appleboy/ssh-action@v1.0.3):
+             → cd /opt/app
+             → sudo git pull
+             → sudo /opt/app/.venv/bin/pip install -r requirements.txt
+             → sudo systemctl restart app
+             → sleep 3s, then systemctl is-active --quiet app
+             → journalctl -u app -n 20
+        4. Health check: GET http://<VM_HOST>:<APP_PORT>/health
+             retries 5 × every 5 s — fails the run if no 200
+```
+
+The workflow also supports **manual dispatch** from the Actions tab, with an optional `vm_host` input to target a specific IP without changing the `VM_HOST` secret.
+
+---
+
+### Step 1 — Get the VM public IP
+
+After `terraform apply` completes, retrieve the public IP:
+
+```bash
+make output
+# or
+cd terraform && terraform output -raw vm_public_ip
+```
+
+Note this value — you will need it in the next step.
+
+---
+
+### Step 2 — Add repository secrets
+
+Go to your GitHub repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
+
+Add each of the following secrets:
+
+| Secret | Value | Notes |
+|--------|-------|-------|
+| `VM_HOST` | Public IP of the VM | From `make output` |
+| `VM_USER` | `azureuser` | Default admin username; change if you set a different `admin_username` in `terraform.tfvars` |
+| `VM_SSH_KEY` | Full contents of `~/.ssh/id_rsa` | The private key — include the `-----BEGIN` and `-----END` lines |
+| `APP_PORT` | `8000` | Optional; workflow falls back to `8000` if the secret is absent |
+
+**Copying the private key:**
+
+```bash
+# macOS — copy to clipboard
+cat ~/.ssh/id_rsa | pbcopy
+
+# Linux
+cat ~/.ssh/id_rsa | xclip -selection clipboard
+# or just print and copy manually
+cat ~/.ssh/id_rsa
+```
+
+Paste the entire output (all lines including the header and footer) as the value of `VM_SSH_KEY`.
+
+> Never share or commit the private key. GitHub encrypts all repository secrets and they are never exposed in workflow logs.
+
+---
+
+### Step 3 — Confirm the workflow file is tracked
+
+The workflow file must be committed to the repository at `.github/workflows/deploy.yml`. Verify:
+
+```bash
+git ls-files .github/workflows/deploy.yml
+# Expected: .github/workflows/deploy.yml
+```
+
+If it is not tracked, stage and commit it:
+
+```bash
+git add .github/workflows/deploy.yml
+git commit -m "ci: add app deploy workflow"
+git push origin main
+```
+
+---
+
+### Step 4 — Trigger your first deploy
+
+The push path filter (`app/**`) requires actual file changes under `app/` — an empty commit won't trigger it. The simplest way to trigger the first run is the manual dispatch:
+
+1. Go to your repository → **Actions** → **Deploy App** → **Run workflow**
+2. Select `main` and click **Run workflow**
+
+Alternatively, make a real change to any file under `app/` and push:
+
+```bash
+# Example: append a blank line to requirements.txt
+echo "" >> app/requirements.txt
+git add app/requirements.txt
+git commit -m "ci: trigger first deploy"
+git push origin main
+```
+
+Watch the run live:
+
+1. Go to your repository → **Actions** → **Deploy App**
+2. Click the running workflow to see real-time logs
+3. The **Health check** step confirms the app responded with HTTP 200 after the deploy
+
+A passing run looks like:
+
+```
+✓ app service is running
+→ Last 20 log lines:
+  INFO:     Application startup complete.
+  ...
+→ Checking http://20.1.2.3:8000/health ...
+✓ Health check passed (HTTP 200)
+```
+
+---
+
+### Step 5 — Trigger a manual deploy
+
+To deploy without a code push (e.g. after updating secrets or rotating the VM):
+
+1. Go to **Actions** → **Deploy App** → **Run workflow**
+2. Select the branch (`main`)
+3. Optionally enter a VM IP in the **vm_host** field to override `VM_HOST`
+4. Click **Run workflow**
+
+---
+
+### Workflow trigger details
+
+The workflow only runs when files under these paths change on a push to `main`:
+
+```yaml
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy.yml"
+```
+
+Pushes that only change Terraform files, documentation, or scripts do **not** trigger a deploy. Use `workflow_dispatch` (step 5) to force a deploy from any commit.
+
+---
+
+### Updating the VM IP after re-provision
+
+The public IP resource (`pip-app-<env>`) is separate from the VM resource. How it behaves depends on which destroy path was taken:
+
+| Action | Public IP outcome |
+|--------|------------------|
+| `terraform taint azurerm_linux_virtual_machine.app_vm` + apply | **IP retained** — only the VM is destroyed and recreated; the PIP resource survives |
+| `make destroy` + `make apply` | **IP changes** — all resources including the PIP are destroyed; a new static IP is allocated |
+
+After a full destroy + apply, update `VM_HOST`:
+
+1. Run `make output` to get the new IP
+2. Go to GitHub → **Settings** → **Secrets and variables** → **Actions**
+3. Click `VM_HOST` → **Update** → paste the new IP → **Save**
+
+The next workflow run will use the updated IP automatically.
+
+---
+
+### Troubleshooting the workflow
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `VM_HOST secret is not set` | Secret missing or misspelled | Check Settings → Secrets — name must be exactly `VM_HOST` |
+| `SSH authentication failed` | Wrong private key in `VM_SSH_KEY` | Paste the full `~/.ssh/id_rsa` including header/footer lines |
+| `ssh: connect to host … port 22: Connection refused` | VM is stopped, NSG blocks SSH, or IP changed | Check VM is running in Azure portal; verify `ssh_allowed_cidr` in tfvars; update `VM_HOST` if IP changed |
+| `git pull` fails with `Permission denied` | App repo is private but no deploy key is configured | See [Private repositories](#private-repositories) section |
+| Health check fails (HTTP 502) | App crashed on restart | Check workflow logs for the `journalctl` output; SSH in and run `journalctl -u app -n 50` |
+| Health check fails (connection refused on port 8000) | `APP_PORT` secret doesn't match `app_port` in tfvars | Set `APP_PORT` secret to match `terraform output` `app_url` port |
+
+---
+
+## 10. Security Hardening
 
 ### Restrict SSH access
 
@@ -432,7 +686,7 @@ The `app` service unit has the following sandbox flags active:
 
 ---
 
-## 10. Destroying Resources
+## 11. Destroying Resources
 
 ```bash
 make destroy

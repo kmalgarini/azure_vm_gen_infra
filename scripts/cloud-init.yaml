@@ -43,7 +43,7 @@ write_files:
       Type=simple
       User=appuser
       Group=appuser
-      WorkingDirectory=/opt/app
+      WorkingDirectory=/opt/app/app
       EnvironmentFile=/opt/app/.env
       ExecStart=/opt/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${app_port} --workers 2
       ExecReload=/bin/kill -HUP $MAINPID
@@ -74,9 +74,9 @@ write_files:
       Type=oneshot
       User=appuser
       Group=appuser
-      WorkingDirectory=/opt/app
+      WorkingDirectory=/opt/app/app
       EnvironmentFile=/opt/app/.env
-      ExecStart=/opt/app/.venv/bin/python /opt/app/restocking_file_generator.py
+      ExecStart=/opt/app/.venv/bin/python /opt/app/app/restocking_file_generator.py
       StandardOutput=journal
       StandardError=journal
       SyslogIdentifier=restocking-generator
@@ -116,9 +116,9 @@ write_files:
       Type=oneshot
       User=appuser
       Group=appuser
-      WorkingDirectory=/opt/app
+      WorkingDirectory=/opt/app/app
       EnvironmentFile=/opt/app/.env
-      ExecStart=/opt/app/.venv/bin/python /opt/app/job_status_generator.py
+      ExecStart=/opt/app/.venv/bin/python /opt/app/app/job_status_generator.py
       StandardOutput=journal
       StandardError=journal
       SyslogIdentifier=job-status-generator
@@ -249,7 +249,7 @@ runcmd:
   # Create the virtual environment and install dependencies.
   - python3.11 -m venv /opt/app/.venv
   - /opt/app/.venv/bin/pip install --quiet --upgrade pip
-  - /opt/app/.venv/bin/pip install --quiet -r /opt/app/requirements.txt
+  - /opt/app/.venv/bin/pip install --quiet -r /opt/app/app/requirements.txt
 
   # Load the new systemd unit and start the app.
   - systemctl daemon-reload

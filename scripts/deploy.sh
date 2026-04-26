@@ -28,7 +28,7 @@ cd /opt/app
 sudo git pull
 
 echo "→ Installing dependencies ..."
-sudo /opt/app/.venv/bin/pip install --quiet -r requirements.txt
+sudo /opt/app/.venv/bin/pip install --quiet -r app/requirements.txt
 
 echo "→ Restarting app service ..."
 sudo systemctl restart app

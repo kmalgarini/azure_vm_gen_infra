@@ -53,7 +53,7 @@ Storage Account (optional – remote Terraform state backend)
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `resource_group_name` | `rg-vm-python` | Azure resource group name |
-| `location` | `eastus` | Azure region |
+| `location` | `canadaeast` | Azure region |
 | `vm_size` | `Standard_B2s` | VM SKU |
 | `admin_username` | `azureuser` | SSH admin user |
 | `ssh_public_key_path` | `~/.ssh/id_rsa.pub` | Path to local public key |

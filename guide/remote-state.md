@@ -26,7 +26,7 @@ Run this once before enabling the backend. Use a unique storage account name (3â
 RG="rg-tfstate"
 SA="tfstate$(openssl rand -hex 4)"   # e.g. tfstate1a2b3c4d
 CONTAINER="tfstate"
-LOCATION="eastus"
+LOCATION="canadaeast"
 
 # Create resource group
 az group create \
