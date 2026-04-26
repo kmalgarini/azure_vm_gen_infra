@@ -36,6 +36,7 @@ For a full component diagram and infrastructure breakdown see [architecture.md](
 | [deploy.md](deploy.md) | First-time provisioning, app updates, rollback, environment promotion |
 | [architecture.md](architecture.md) | All Azure resources, bootstrap flow, systemd units, network layout |
 | [configuration-reference.md](configuration-reference.md) | Every Terraform variable with type, default, valid values, and examples |
+| [dtr.md](dtr.md) | DTR identifiers, on-disk layout, lifecycle, timers, and links to detailed plans |
 | [remote-state.md](remote-state.md) | Storing Terraform state in Azure Blob Storage for team or CI use |
 
 ---

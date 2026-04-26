@@ -334,6 +334,8 @@ app_startup_timeout = 900   # 15 minutes
 
 ## Restocking File Generator
 
+For what a **DTR** is in this project, where files land on the VM, and how the per-DTR lifecycle works, see **[dtr.md](dtr.md)**.
+
 These variables tune the `restocking-generator.timer` that runs every 5 minutes on the VM.
 
 ### `restocking_dtrs_per_batch`

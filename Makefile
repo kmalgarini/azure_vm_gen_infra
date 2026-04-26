@@ -9,9 +9,9 @@ SCRIPTS_DIR := scripts
 # Resolve the VM public IP from Terraform output (requires a previous apply).
 PUBLIC_IP   := $(shell cd $(TF_DIR) && terraform output -raw vm_public_ip 2>/dev/null || echo "")
 ADMIN_USER  := azureuser
-SSH_KEY     := $$HOME/.ssh/id_rsa
+SSH_KEY     ?= $(HOME)/.ssh/id_rsa
 
-.PHONY: help init validate fmt lint plan apply destroy deploy ssh logs status clean
+.PHONY: help init validate fmt lint plan apply apply-auto destroy output deploy ssh logs status cloud-init-log bootstrap-ssh clean
 
 help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -77,6 +77,14 @@ status: ## Check app service status on the VM
 cloud-init-log: ## View the cloud-init bootstrap log on the VM
 	@test -n "$(PUBLIC_IP)" || (echo "ERROR: could not resolve vm_public_ip from Terraform output" && exit 1)
 	ssh -i $(SSH_KEY) $(ADMIN_USER)@$(PUBLIC_IP) "sudo cat /var/log/cloud-init-output.log"
+
+# Run the two SSH scripts (cloud-init wait + app install) if the VM is up but nothing is deployed:
+#  requires terraform/remote_bootstrap.rendered.sh (from a previous apply) and a reachable VM on 22.
+bootstrap-ssh: ## Push and run wait + app bootstrap (same as null_resource remote-exec)
+	@test -n "$(PUBLIC_IP)" || (echo "ERROR: could not resolve vm_public_ip from Terraform output" && exit 1)
+	@test -f $(TF_DIR)/remote_bootstrap.rendered.sh || (echo "ERROR: run terraform apply at least once to create terraform/remote_bootstrap.rendered.sh" && exit 1)
+	@chmod +x $(SCRIPTS_DIR)/push_bootstrap.sh
+	$(SCRIPTS_DIR)/push_bootstrap.sh "$(PUBLIC_IP)" "$(SSH_KEY)" "$(ADMIN_USER)"
 
 # ---------------------------------------------------------------------------
 # Housekeeping

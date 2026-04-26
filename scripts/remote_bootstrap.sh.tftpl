@@ -1,0 +1,106 @@
+#!/bin/bash
+# Second remote-exec: rendered by Terraform into terraform/remote_bootstrap.rendered.sh.
+# If you never see the banner below, the second provisioner did not start (rare) or
+# this file was not the one uploaded; check: terraform output -raw remote_bootstrap_file
+set -euo pipefail
+echo "== TERRAFORM remote-exec #2: app bootstrap script running $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+echo "host=$(hostname) user=$(id -un) script=$0"
+# This step can run 20–40+ min (clone, venv, pip) on a small SKU. A line every 40s so
+# the session is not idle for middleboxes; inner sudo may buffer until newline.
+( while true; do sleep 40; date -u "+[bootstrap/ssh] keepalive %Y-%m-%dT%H:%M:%SZ"; done ) &
+_BOOT_SSH_ALIVE=$!
+trap 'kill $_BOOT_SSH_ALIVE 2>/dev/null || true' EXIT
+
+sudo -n /bin/bash -e <<'BOOT'
+set -euxo pipefail
+export PYTHONUNBUFFERED=1
+echo "==== app bootstrap (root/sudo) start $(date -u +%Y-%m-%dT%H:%M:%SZ) ===="
+if ! id -u appuser >/dev/null 2>&1; then
+  useradd --system --shell /usr/sbin/nologin --home-dir /opt/app appuser
+fi
+rm -rf /opt/app
+echo "---- git clone (max 20m; aborts if GitHub is unreachable) ----"
+# GIT_TERMINAL_PROMPT=0: never prompt (remote-exec has no TTY). Private HTTPS repos need
+# github_personal_access_token in tfvars, or a public repository.
+timeout 20m env GIT_TERMINAL_PROMPT=0 GIT_TERMINAL_PROGRESS=1 git -c http.lowSpeedLimit=500 -c http.lowSpeedTime=120 clone --progress -- "${app_repo}" /opt/app
+echo "---- git clone done ----"
+printf '%s\n' "APP_ENV=${app_env}" "APP_PORT=${app_port}" "RESTOCKING_INBOUND_DIR=/var/restocking/inbound" "RESTOCKING_STATE_FILE=/opt/app/generator_state.json" "RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}" "RESTOCKING_FAIL_RATE=${restocking_fail_rate}" "RESTOCKING_ARTEFACT_RETENTION_DAYS=${restocking_artefact_retention_days}" "JOB_OUTPUT_DIR=/var/jobs" "JOB_STATE_FILE=/opt/app/job_state.json" "JOB_HOLD_TICKS=${job_hold_ticks}" "JOB_NO_CHANGE_PROB=${job_no_change_prob}" > /opt/app/.env
+chown -R appuser:appuser /opt/app
+chmod 640 /opt/app/.env
+test -f /opt/app/app/requirements.txt
+echo "---- venv + pip (if this hangs, check PyPI/DNS on the VM) ----"
+python3 -m venv /opt/app/.venv
+# Fail fast on unreachable PyPI instead of an infinite hang. Small deps: wheels should
+# finish in minutes; longer usually means network/DNS/IPv6 issues, not "still installing".
+if ! command -v timeout >/dev/null; then
+  echo "FATAL: coreutils 'timeout' missing" >&2
+  exit 1
+fi
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_DEFAULT_TIMEOUT=120
+if ! python3 -c "import socket; s=socket.create_connection(('pypi.org',443),5); s.close()" 2>/dev/null; then
+  echo "FATAL: cannot open TCP 443 to pypi.org in 5s (DNS/firewall/IPv6?)" >&2
+  exit 1
+fi
+echo "---- pip: upgrade (max 20m) ----"
+timeout 20m /opt/app/.venv/bin/pip install --progress-bar on --upgrade pip
+echo "---- pip: requirements (max 30m) ----"
+timeout 30m /opt/app/.venv/bin/pip install --progress-bar on -r /opt/app/app/requirements.txt
+echo "---- pip: done ----"
+chown -R appuser:appuser /opt/app
+test -x /opt/app/.venv/bin/uvicorn
+mkdir -p /var/restocking/inbound /var/jobs
+chown appuser:appuser /var/restocking/inbound /var/jobs
+echo "---- systemctl: app + nginx + timers ----"
+systemctl daemon-reload
+systemctl enable app
+systemctl start app
+ln -sf /etc/nginx/sites-available/app /etc/nginx/sites-enabled/app
+rm -f /etc/nginx/sites-enabled/default
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+systemctl enable restocking-generator.timer
+systemctl start restocking-generator.timer
+systemctl enable job-status-generator.timer
+systemctl start job-status-generator.timer
+systemctl enable dtr-cleanup.timer
+systemctl start dtr-cleanup.timer
+
+echo "---- verify: Python tree + venv (as root) ----"
+test -f /opt/app/app/main.py
+test -f /opt/app/app/restocking_file_generator.py
+test -f /opt/app/app/job_status_generator.py
+test -x /opt/app/.venv/bin/python
+test -x /opt/app/.venv/bin/uvicorn
+if command -v runuser >/dev/null 2>&1; then
+  runuser -u appuser -- /bin/sh -c 'cd /opt/app/app && /opt/app/.venv/bin/python -c "import main" && echo "OK: import app module"'
+else
+  su -s /bin/sh appuser -c 'cd /opt/app/app && /opt/app/.venv/bin/python -c "import main" && echo "OK: import app module"'
+fi
+
+echo "---- verify: systemd (app, nginx, timers) ----"
+systemctl is-active app
+systemctl is-active nginx
+systemctl is-active restocking-generator.timer
+systemctl is-active job-status-generator.timer
+systemctl is-active dtr-cleanup.timer
+
+echo "---- verify: HTTP (app :${app_port} + nginx :80) ----"
+if ! curl -fsS --connect-timeout 5 --max-time 20 "http://127.0.0.1:${app_port}/health"; then
+  echo "FATAL: app /health on port ${app_port} failed" >&2
+  systemctl --no-pager -l status app || true
+  exit 1
+fi
+echo ""
+if ! curl -fsS --connect-timeout 5 --max-time 20 "http://127.0.0.1/health"; then
+  echo "FATAL: nginx /health (proxy) failed" >&2
+  systemctl --no-pager -l status nginx || true
+  exit 1
+fi
+echo ""
+echo "==== app bootstrap + verify done $(date -u +%Y-%m-%dT%H:%M:%SZ) ===="
+BOOT
+
+echo "---- journal: app (last 20) ----"
+sudo journalctl -u app -n 20 --no-pager

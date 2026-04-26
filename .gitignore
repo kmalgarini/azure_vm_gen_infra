@@ -2,6 +2,7 @@
 # Terraform
 # ---------------------------------------------------------------------------
 **/.terraform/
+terraform/remote_bootstrap.rendered.sh
 *.tfplan
 tfplan
 *.tfstate

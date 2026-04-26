@@ -11,7 +11,7 @@ variable "resource_group_name" {
 variable "location" {
   description = "Azure region where resources will be deployed."
   type        = string
-  default     = "eastus"
+  default     = "canadaeast"
 }
 
 variable "environment" {
@@ -133,8 +133,15 @@ variable "enable_azure_monitor_agent" {
 # ---------------------------------------------------------------------------
 
 variable "app_repo_url" {
-  description = "Git URL of the Python application to clone onto the VM during first boot."
+  description = "HTTPS Git URL to clone (e.g. https://github.com/owner/repo.git). Public repos work without a token. For private GitHub repos, set github_personal_access_token; otherwise git prompts for a user (remote-exec has no TTY and will hang until timeout)."
   type        = string
+}
+
+variable "github_personal_access_token" {
+  description = "Optional. GitHub PAT (classic: repo scope, or fine-grained: Contents read) used only in the on-VM git clone. When set, https://github.com/… URLs are rewritten to embed auth. Do not commit; use env TF_VAR_github_personal_access_token or a secrets file outside git."
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "app_port" {
@@ -149,9 +156,15 @@ variable "app_port" {
 }
 
 variable "app_startup_timeout" {
-  description = "Seconds to wait for cloud-init + app startup before failing the apply."
+  description = "Per-step time budget for the SSH remote-exec (cloud-init wait, then app install). If a step needs longer than this, applies fail with a broken channel / missing exit status on slow links or underpowered SKUs. Default 1 hour."
   type        = number
-  default     = 600
+  default     = 3600
+}
+
+variable "run_remote_bootstrap" {
+  description = "If true, null_resource wait_for_app runs the two long SSH steps during apply. Set false to create the VM and render scripts only; then run the rendered terraform/remote_bootstrap.rendered.sh and scripts/remote_wait_cloudinit.sh over SSH yourself (avoids long apply / Ctrl-C tearing down the session)."
+  type        = bool
+  default     = true
 }
 
 # ---------------------------------------------------------------------------

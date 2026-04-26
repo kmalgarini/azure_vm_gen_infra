@@ -14,6 +14,8 @@
 #   ${restocking_artefact_retention_days} — Days to retain artefact files (default 7)
 #   ${job_hold_ticks}             — Ticks to hold terminal job status (default 2)
 #   ${job_no_change_prob}         — Probability a job stays in its current status (default 0.40)
+# App install (git/venv/systemd) is not runcmd — it runs from Terraform over SSH; see
+# scripts/remote_bootstrap.sh.tftpl
 # ---------------------------------------------------------------------------
 
 package_update: true
@@ -40,11 +42,14 @@ write_files:
       Documentation=https://github.com/
       After=network.target
       Wants=network-online.target
+      # Until Terraform/SSH bootstrap creates /opt/app, do not start (avoids crash loops).
+      ConditionPathExists=/opt/app/.env
 
       [Service]
       Type=simple
       User=appuser
       Group=appuser
+      UMask=0022
       WorkingDirectory=/opt/app/app
       EnvironmentFile=/opt/app/.env
       ExecStart=/opt/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port ${app_port} --workers 2
@@ -71,11 +76,13 @@ write_files:
       [Unit]
       Description=Restocking File Generator (oneshot)
       After=network.target
+      ConditionPathExists=/opt/app/.env
 
       [Service]
       Type=oneshot
       User=appuser
       Group=appuser
+      UMask=0022
       WorkingDirectory=/opt/app/app
       EnvironmentFile=/opt/app/.env
       ExecStart=/opt/app/.venv/bin/python /opt/app/app/restocking_file_generator.py
@@ -113,11 +120,13 @@ write_files:
       [Unit]
       Description=Job Status Generator (oneshot)
       After=network.target
+      ConditionPathExists=/opt/app/.env
 
       [Service]
       Type=oneshot
       User=appuser
       Group=appuser
+      UMask=0022
       WorkingDirectory=/opt/app/app
       EnvironmentFile=/opt/app/.env
       ExecStart=/opt/app/.venv/bin/python /opt/app/app/job_status_generator.py
@@ -155,6 +164,7 @@ write_files:
       [Unit]
       Description=Delete DTR artefact files older than retention window
       After=network.target
+      ConditionPathExists=/opt/app/.env
 
       [Service]
       Type=oneshot
@@ -221,43 +231,10 @@ write_files:
           }
       }
 
-  # Executed with explicit bash in runcmd (see below), not /bin/sh (dash).
-  - path: /usr/local/sbin/bootstrap-terraform.sh
-    permissions: "0755"
-    owner: root:root
-    content: |
-      #!/bin/bash
-      set -euxo pipefail
-      if ! id -u appuser >/dev/null 2>&1; then
-        useradd --system --shell /usr/sbin/nologin --home-dir /opt/app appuser
-      fi
-      git clone ${app_repo} /opt/app
-      printf '%s\n' "APP_ENV=${app_env}" "APP_PORT=${app_port}" "RESTOCKING_INBOUND_DIR=/var/restocking/inbound" "RESTOCKING_STATE_FILE=/opt/app/generator_state.json" "RESTOCKING_DTRS_PER_BATCH=${restocking_dtrs_per_batch}" "RESTOCKING_FAIL_RATE=${restocking_fail_rate}" "RESTOCKING_ARTEFACT_RETENTION_DAYS=${restocking_artefact_retention_days}" "JOB_OUTPUT_DIR=/var/jobs" "JOB_STATE_FILE=/opt/app/job_state.json" "JOB_HOLD_TICKS=${job_hold_ticks}" "JOB_NO_CHANGE_PROB=${job_no_change_prob}" > /opt/app/.env
-      chown -R appuser:appuser /opt/app
-      chmod 640 /opt/app/.env
-      test -f /opt/app/app/requirements.txt
-      python3 -m venv /opt/app/.venv
-      /opt/app/.venv/bin/pip install --quiet --upgrade pip
-      /opt/app/.venv/bin/pip install --quiet -r /opt/app/app/requirements.txt
-      test -x /opt/app/.venv/bin/uvicorn
-      mkdir -p /var/restocking/inbound /var/jobs
-      chown appuser:appuser /var/restocking/inbound /var/jobs
-      systemctl daemon-reload
-      systemctl enable app
-      systemctl start app
-      ln -sf /etc/nginx/sites-available/app /etc/nginx/sites-enabled/app
-      rm -f /etc/nginx/sites-enabled/default
-      nginx -t
-      systemctl enable nginx
-      systemctl restart nginx
-      systemctl enable restocking-generator.timer
-      systemctl start restocking-generator.timer
-      systemctl enable job-status-generator.timer
-      systemctl start job-status-generator.timer
-      systemctl enable dtr-cleanup.timer
-      systemctl start dtr-cleanup.timer
-
-# List form: cloud-init spawns the binary directly. Multiline strings use /bin/sh
-# and break on pipefail, line continuations, and dash vs bash. bash -e = errexit.
+# Make monitored paths readable/traversable for AMA/fluent-bit.
 runcmd:
-  - ["/bin/bash", "-e", "/usr/local/sbin/bootstrap-terraform.sh"]
+  - [bash, -lc, "install -d -m 0755 /var/restocking /var/restocking/inbound /var/jobs"]
+  - [bash, -lc, "touch /var/jobs/events.jsonl && chmod 0644 /var/jobs/events.jsonl"]
+  - [bash, -lc, "find /var/restocking -type d -exec chmod 0755 {} \\;"]
+  - [bash, -lc, "find /var/restocking/inbound -type f -exec chmod 0644 {} \\;"]
+

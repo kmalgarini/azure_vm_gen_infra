@@ -17,6 +17,33 @@ locals {
 
   app_nsg_inbound_base_priority      = 110
   app_nsg_inbound_cidr_rule_priority = local.app_nsg_inbound_base_priority + length(local.app_nsg_inbound_tags)
+
+  # Private GitHub HTTPS: embed PAT so the VM can clone without an interactive prompt.
+  # (remote-exec has no TTY; git would otherwise block on "Username for github.com".)
+  app_repo_clone_url = var.github_personal_access_token == "" ? var.app_repo_url : replace(
+    var.app_repo_url,
+    "https://github.com/",
+    "https://x-access-token:${var.github_personal_access_token}@github.com/"
+  )
+
+  # cloud-init: packages + write_files only. App install runs via null_resource + SSH
+  # (see scripts/remote_bootstrap.sh.tftpl) — avoids cloud-init runcmd/scripts_user failures.
+  # Never put the PAT in cloud_init_vars: it would land in Azure custom_data and state.
+  cloud_init_vars = {
+    app_repo                           = var.app_repo_url
+    app_port                           = tostring(var.app_port)
+    app_env                            = var.environment
+    restocking_dtrs_per_batch          = tostring(var.restocking_dtrs_per_batch)
+    restocking_fail_rate               = tostring(var.restocking_fail_rate)
+    restocking_artefact_retention_days = tostring(var.restocking_artefact_retention_days)
+    job_hold_ticks                     = tostring(var.job_hold_ticks)
+    job_no_change_prob                 = tostring(var.job_no_change_prob)
+  }
+  cloud_config_text = templatefile("${path.module}/../scripts/cloud-init.yaml", local.cloud_init_vars)
+  remote_bootstrap_script = templatefile(
+    "${path.module}/../scripts/remote_bootstrap.sh.tftpl",
+    merge(local.cloud_init_vars, { app_repo = local.app_repo_clone_url })
+  )
 }
 
 # ---------------------------------------------------------------------------
@@ -164,6 +191,11 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
     public_key = file(pathexpand(var.ssh_public_key_path))
   }
 
+  # Enable managed identity so AMA can authenticate with Azure Monitor endpoints.
+  identity {
+    type = "SystemAssigned"
+  }
+
   os_disk {
     name                 = "osdisk-app-${var.environment}"
     caching              = "ReadWrite"
@@ -181,16 +213,7 @@ resource "azurerm_linux_virtual_machine" "app_vm" {
   # cloud-init script: installs Python, clones the app, and starts it via systemd.
   # templatefile() injects Terraform variables into the YAML template before
   # base64-encoding it as custom_data.
-  custom_data = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
-    app_repo                           = var.app_repo_url
-    app_port                           = tostring(var.app_port)
-    app_env                            = var.environment
-    restocking_dtrs_per_batch          = tostring(var.restocking_dtrs_per_batch)
-    restocking_fail_rate               = tostring(var.restocking_fail_rate)
-    restocking_artefact_retention_days = tostring(var.restocking_artefact_retention_days)
-    job_hold_ticks                     = tostring(var.job_hold_ticks)
-    job_no_change_prob                 = tostring(var.job_no_change_prob)
-  }))
+  custom_data = base64encode(local.cloud_config_text)
 
   # Disable password authentication — SSH key only.
   disable_password_authentication = true
@@ -224,30 +247,40 @@ resource "azurerm_virtual_machine_extension" "azure_monitor_agent" {
 }
 
 # ---------------------------------------------------------------------------
-# Bootstrap Verification
-#
-# Waits for cloud-init to complete and confirms the app service is active
-# before terraform apply returns. Prevents a "success" with a broken app.
+# Bootstrap: SSH script (not cloud-init runcmd) installs the app after write_files.
+# `remote-exec` script= must be a file path, not templatefile() output (a string),
+# or Terraform mis-treats the entire script as the path: "file name too long".
 # ---------------------------------------------------------------------------
 
+resource "local_file" "remote_bootstrap" {
+  content         = local.remote_bootstrap_script
+  filename        = "${path.module}/remote_bootstrap.rendered.sh"
+  file_permission = "0600"
+}
+
+# Terraform can only run provisioners on a resource. There is no "wait for VM" API, so
+# this null_resource (no cloud object) is the standard pattern: triggers re-run the SSH
+# scripts when VM id or bootstrap inputs change. Optional: set run_remote_bootstrap=false
+# to skip long apply / avoid Ctrl-C killing the session mid-bootstrap.
+moved {
+  from = null_resource.wait_for_app
+  to   = null_resource.wait_for_app[0]
+}
+
 resource "null_resource" "wait_for_app" {
+  count = var.run_remote_bootstrap ? 1 : 0
+
   depends_on = [
     azurerm_linux_virtual_machine.app_vm,
     azurerm_subnet_network_security_group_association.app,
+    local_file.remote_bootstrap,
   ]
 
   triggers = {
-    vm_id = azurerm_linux_virtual_machine.app_vm.id
-    cloud_init = base64encode(templatefile("${path.module}/../scripts/cloud-init.yaml", {
-      app_repo                           = var.app_repo_url
-      app_port                           = tostring(var.app_port)
-      app_env                            = var.environment
-      restocking_dtrs_per_batch          = tostring(var.restocking_dtrs_per_batch)
-      restocking_fail_rate               = tostring(var.restocking_fail_rate)
-      restocking_artefact_retention_days = tostring(var.restocking_artefact_retention_days)
-      job_hold_ticks                     = tostring(var.job_hold_ticks)
-      job_no_change_prob                 = tostring(var.job_no_change_prob)
-    }))
+    vm_id                = azurerm_linux_virtual_machine.app_vm.id
+    cloud_config_sha     = sha256(local.cloud_config_text)
+    remote_bootstrap_sha = sha256(local.remote_bootstrap_script)
+    wait_cloudinit_sha   = filesha256("${path.module}/../scripts/remote_wait_cloudinit.sh")
   }
 
   connection {
@@ -255,14 +288,16 @@ resource "null_resource" "wait_for_app" {
     host        = azurerm_public_ip.app.ip_address
     user        = var.admin_username
     private_key = file(pathexpand(var.ssh_private_key_path))
-    timeout     = "${var.app_startup_timeout}s"
+    # Each remote-exec gets its own session; this applies per step (wait cloud-init, then app).
+    timeout = "${var.app_startup_timeout}s"
   }
 
-  # One shell: remote-exec runs each list element separately, so a failed
-  # is-active was previously masked if a later command exited 0.
+  # Split: a single long run can exceed the SSH timeout and die without a clean exit status.
   provisioner "remote-exec" {
-    inline = [
-      "bash -c 'set -euo pipefail; cloud-init status --wait --long; systemctl is-active --quiet app; echo \"ok: app is active\"; systemctl is-active --quiet restocking-generator.timer; systemctl is-active --quiet job-status-generator.timer; systemctl is-active --quiet dtr-cleanup.timer; journalctl -u app -n 20 --no-pager'",
-    ]
+    script = "${path.module}/../scripts/remote_wait_cloudinit.sh"
+  }
+
+  provisioner "remote-exec" {
+    script = local_file.remote_bootstrap.filename
   }
 }
